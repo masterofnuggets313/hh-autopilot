@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hh-autopilot"
+version = "0.1.0"
+description = "Поиск работы на hh.ru через своего агента: поиск, фильтры, письма, отклики, отчет"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hh-autopilot contributors" }]
+keywords = ["hh", "job-search", "automation", "agent", "resume"]
+dependencies = [
+    "hh-applicant-tool>=2.5,<3",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+xlsx = ["openpyxl>=3.1"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+hhjob = "hhjob.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hhjob*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
