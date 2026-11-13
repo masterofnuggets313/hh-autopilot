@@ -37,7 +37,7 @@ def cmd_doctor(args) -> int:
     ok = True
     print(f"hhjob {__version__}")
     print(f"каталог: {cfg.root}")
-    print(f"конфиг hh: {cfg.config_dir}")
+    print(f"конфиг hh: {cfg.config_dir or 'по умолчанию у hh-applicant-tool'}")
 
     try:
         api = hh.client(cfg.config_dir, cfg.profile_id)

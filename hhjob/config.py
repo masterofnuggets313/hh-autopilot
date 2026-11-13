@@ -43,7 +43,7 @@ class Limits:
 @dataclass
 class Config:
     root: Path
-    config_dir: Path
+    config_dir: Path | None = None
     area: int = 113
     profile_id: str = ""
     schedule: str = "remote"
@@ -78,9 +78,11 @@ def load(root: Path | None = None) -> Config:
         os.environ.setdefault(key, value)
 
     raw = _read_toml(root / "config.toml")
-    cfg_dir = Path(
-        os.environ.get("HH_CONFIG_DIR") or raw.get("config_dir") or (root / ".hh-config")
-    )
+    # Если каталог токенов не задан явно, переменную не трогаем: пусть
+    # hh-applicant-tool берет свой каталог по умолчанию, туда же кладет токен
+    # команда `hh-applicant-tool auth`.
+    cfg_raw = os.environ.get("HH_CONFIG_DIR") or raw.get("config_dir") or ""
+    cfg_dir = Path(cfg_raw).expanduser() if cfg_raw else None
 
     tracks: dict[str, Track] = {}
     for name, data in (raw.get("tracks") or {}).items():

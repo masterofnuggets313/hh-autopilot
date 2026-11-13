@@ -43,7 +43,7 @@ hh-autopilot закрывает эту рутину:
 Нужен Python 3.12 или новее. Это требование самой библиотеки hh-applicant-tool, начиная с версии 2.5 она собирается только под 3.12 и выше.
 
 ```bash
-git clone https://github.com/<ваш-аккаунт>/hh-autopilot.git
+git clone https://github.com/masterofnuggets313/hh-autopilot.git
 cd hh-autopilot
 python -m venv .venv
 # Windows
@@ -54,6 +54,8 @@ source .venv/bin/activate
 pip install -e ".[xlsx]"
 ```
 
+То же самое одной командой, если не хочется по шагам: `bash scripts/setup.sh` на Linux и macOS, `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` на Windows. Скрипт проверит версию Python, создаст окружение, поставит пакет и разложит примеры конфигов.
+
 Дальше пять шагов.
 
 **1. Авторизация на hh.** Пакет `hh-applicant-tool` проводит OAuth и хранит токен локально.
@@ -62,7 +64,7 @@ pip install -e ".[xlsx]"
 hh-applicant-tool auth
 ```
 
-Если хотите держать токен в отдельной папке, задайте `HH_CONFIG_DIR` в `.env`.
+Токен ляжет в каталог по умолчанию, hhjob его найдет. Если хотите держать токен в отдельной папке, впишите путь в `HH_CONFIG_DIR` в `.env`: hhjob передаст его библиотеке при каждом вызове. Для самой команды `hh-applicant-tool auth` это другая переменная, `CONFIG_DIR`, поэтому при отдельной папке авторизуйтесь так: `CONFIG_DIR=/путь hh-applicant-tool auth`.
 
 **2. Конфиг.** Скопируйте примеры и заполните своими данными.
 
