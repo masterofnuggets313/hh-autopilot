@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -288,7 +289,35 @@ def cmd_report(args) -> int:
     return 0
 
 
+SKILL_CHECK = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "human-writing-ru"
+    / "scripts"
+    / "check_style.py"
+)
+
+
+def _lint_full(args) -> int:
+    """Полная проверка скиллом: канцелярит, падежи, управление, повторы."""
+    if not SKILL_CHECK.exists():
+        print(f"валидатор скилла не найден: {SKILL_CHECK}")
+        print("осталась быстрая проверка, запустите без --full")
+        return 1
+    code = 0
+    for name in args.files:
+        cmd = [sys.executable, str(SKILL_CHECK), name]
+        if args.repeat_against:
+            cmd += ["--repeat-against", args.repeat_against]
+        result = subprocess.run(cmd)
+        code = code or result.returncode
+    return code
+
+
 def cmd_lint(args) -> int:
+    if args.full:
+        return _lint_full(args)
+
     bad = 0
     for name in args.files:
         text = Path(name).read_text(encoding="utf-8")
@@ -345,6 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     t = sub.add_parser("lint", help="проверить текст на стиль")
     t.add_argument("files", nargs="+")
+    t.add_argument("--full", action="store_true",
+                   help="полная проверка скиллом: канцелярит, падежи, управление")
+    t.add_argument("--repeat-against", help="файл с уже отправленным текстом")
     t.set_defaults(func=cmd_lint)
     return p
 
