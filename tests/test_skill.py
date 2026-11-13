@@ -85,3 +85,32 @@ def test_quick_lint_still_works(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 1
     assert "замечаний" in out
+
+
+def _grammar():
+    pytest.importorskip("pymorphy3")
+    if str(SKILL / "scripts") not in sys.path:
+        sys.path.insert(0, str(SKILL / "scripts"))
+    import grammar
+
+    if not grammar.available():
+        pytest.skip("pymorphy3 не разобрался")
+    return grammar
+
+
+def test_cases_after_preposition():
+    grammar = _grammar()
+    found = [what for _, what, _ in grammar.check("Согласно договора работа идет по плану.")]
+    assert any("согласно" in what for what in found)
+
+
+def test_payment_government_in_past_tense():
+    grammar = _grammar()
+    found = [what for _, what, _ in grammar.check("Клиент оплатил за услуги.")]
+    assert any("оплатил за" in what for what in found)
+
+
+def test_payment_noun_is_not_flagged():
+    grammar = _grammar()
+    found = [what for _, what, _ in grammar.check("Оплата за месяц прошла вовремя.")]
+    assert not any("оплата за" in what for what in found)
