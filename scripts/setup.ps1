@@ -1,6 +1,13 @@
 # Установка с нуля на Windows. Запускать из корня репозитория.
 $ErrorActionPreference = "Stop"
 
+$pyOk = python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Нужен Python 3.12 или новее."
+    python -V
+    exit 1
+}
+
 python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
 

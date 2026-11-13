@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,8 +7,9 @@ name = "hh-autopilot"
 version = "0.1.0"
 description = "Поиск работы на hh.ru через своего агента: поиск, фильтры, письма, отклики, отчет"
 readme = "README.md"
-requires-python = ">=3.11"
-license = { text = "MIT" }
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "hh-autopilot contributors" }]
 keywords = ["hh", "job-search", "automation", "agent", "resume"]
 dependencies = [
