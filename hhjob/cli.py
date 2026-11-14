@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -33,6 +34,19 @@ def _access_id(resume: dict) -> str:
     return str(access.get("id") or "")
 
 
+def _track_status(stats: dict) -> str:
+    """Статус трека в отчете.
+
+    Молча пропустить трек нельзя: если запросов не было или все они упали,
+    это видно в отчете отдельной строкой.
+    """
+    if not stats.get("queries"):
+        return "не проверен"
+    if stats.get("found"):
+        return "проверен частично" if stats.get("errors") else "проверен"
+    return "не проверен" if stats.get("errors") else "проверен, ничего не найдено"
+
+
 def cmd_doctor(args) -> int:
     cfg = _load(args)
     ok = True
@@ -55,9 +69,29 @@ def cmd_doctor(args) -> int:
         for r in rs:
             mark = "ok" if _access_id(r) == "clients" else "скрыто"
             print(f"  {r['id'][:12]} {mark:6} {r.get('title')}")
+
+        # Резюме меняется, и навыки в письмах должны меняться вместе с ним.
+        ledger = state_mod.load(cfg.root)
+        digest = hashlib.sha1(
+            json.dumps([(r["id"], r.get("updated_at")) for r in rs]).encode("utf-8")
+        ).hexdigest()[:12]
+        old = state_mod.resume_hash(ledger)
+        if old and old != digest:
+            print("резюме изменилось с прошлого запуска, перечитайте навыки в profile.toml")
+        state_mod.set_resume_hash(ledger, digest)
+        state_mod.save(cfg.root, ledger)
     except Exception as exc:  # noqa: BLE001
         print(f"резюме: ошибка {type(exc).__name__}")
         ok = False
+
+    # Холодный старт: после долгого перерыва вход и вкладки могли отвалиться.
+    days = state_mod.last_run_days(state_mod.load(cfg.root))
+    if days is None:
+        print("последний запуск: не было")
+    elif days >= 14:
+        print(f"последний запуск: {int(days)} дн. назад. Холодный старт: проверьте вход и резюме")
+    else:
+        print(f"последний запуск: {days:.1f} дн. назад")
 
     if not cfg.tracks:
         print("треки: не настроены, скопируйте config.example.toml в config.toml")
@@ -84,10 +118,14 @@ def cmd_search(args) -> int:
         return 1
 
     collected: dict[str, dict] = {}
+    stats: dict[str, dict] = {}
     for name in tracks:
         track = cfg.tracks[name]
         queries = [args.query] if args.query else track.queries
+        st = {"queries": 0, "errors": 0, "found": 0, "passed": 0}
+        stats[name] = st
         for q in queries:
+            st["queries"] += 1
             try:
                 found = hh.search(
                     api,
@@ -99,8 +137,10 @@ def cmd_search(args) -> int:
                     max_pages=args.pages,
                 )
             except Exception as exc:  # noqa: BLE001
+                st["errors"] += 1
                 print(f"  {name} / {q}: ошибка {type(exc).__name__}")
                 continue
+            st["found"] += len(found)
             print(f"  {name} / {q}: {len(found)}")
             for v in found:
                 v["track"] = name
@@ -113,12 +153,30 @@ def cmd_search(args) -> int:
         salary_min=args.salary or 0,
         cold_patterns=cfg.cold_markers or None,
         gph_patterns=cfg.gph_markers or None,
+        scope=cfg.blockers_scope,
         limit=args.limit,
     )
+    for v in picked:
+        name = v.get("track")
+        if name in stats:
+            stats[name]["passed"] += 1
+
     out = _dump(cfg.data_dir / f"candidates-{date.today().isoformat()}.json", picked)
     print(f"\nсобрано {len(items)}, после фильтров {len(picked)}")
     for v in picked[:15]:
         print(f"  {v['score']:>2} | {filters.money_label(v):32} | {v['employer'][:24]:24} | {v['name'][:40]}")
+
+    print("\nтреки:")
+    for name, st in stats.items():
+        print(
+            f"  {name}: {_track_status(st)}, запросов {st['queries']}, "
+            f"найдено {st['found']}, прошли {st['passed']}"
+        )
+
+    ledger = state_mod.load(cfg.root)
+    state_mod.log_run(ledger, tracks=stats, found=len(items), picked=len(picked))
+    state_mod.save(cfg.root, ledger)
+
     print(f"\nфайл: {out}")
     return 0
 
@@ -174,14 +232,36 @@ def cmd_apply(args) -> int:
     api = hh.client(cfg.config_dir, cfg.profile_id)
     ledger = state_mod.load(cfg.root)
 
+    # Отклики, которые уже есть в переговорах. Свой журнал может их не знать,
+    # если отклик отправили руками или другим инструментом.
+    known: set[str] = set()
+    try:
+        known = {
+            str((n.get("vacancy") or {}).get("id"))
+            for n in hh.negotiations(api)
+            if (n.get("vacancy") or {}).get("id")
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"переговоры не прочитались ({type(exc).__name__}), проверяю только по журналу")
+
     items = json.loads(src.read_text(encoding="utf-8"))
+
+    # Отложенные с прошлого раза идут первыми.
+    queue = set(state_mod.postponed(ledger))
+    if queue:
+        items.sort(key=lambda i: 0 if str(i["id"]) in queue else 1)
+        print(f"в очереди с прошлого раза: {len(queue)}")
+
     ready, skipped = [], []
     for item in items:
         if item["problems"]:
             skipped.append((item["id"], "; ".join(item["problems"])))
             continue
-        if state_mod.already_sent(ledger, item["id"]):
+        if state_mod.already_sent(ledger, item["id"], item.get("employer"), item.get("name")):
             skipped.append((item["id"], "уже откликались"))
+            continue
+        if str(item["id"]) in known:
+            skipped.append((item["id"], "отклик уже есть в переговорах"))
             continue
         try:
             full = hh.vacancy(api, item["id"])
@@ -217,12 +297,25 @@ def cmd_apply(args) -> int:
         resume_for=resume_for, default_resume=default_resume,
         pause=cfg.limits.pause_seconds, dry=args.dry, per_day=cfg.limits.per_day,
     )
-    state_mod.log_run(ledger, sent=len(sent), failed=len(failed), dry=bool(args.dry))
+    state_mod.log_run(
+        ledger,
+        sent=len(sent),
+        failed=len(failed),
+        dry=bool(args.dry),
+        postponed=len(state_mod.postponed(ledger)),
+    )
     state_mod.save(cfg.root, ledger)
 
     print(f"\nотправлено {len(sent)}, ошибок {len(failed)}")
     for f in failed:
         print(f"  {f[0]}: {f[1]}")
+
+    left = state_mod.postponed(ledger)
+    if left:
+        print(f"в очереди на следующий раз: {len(left)}")
+    until = state_mod.blocked_until(ledger)
+    if until:
+        print(f"блокировка до {until:%d.%m %H:%M}, пауза между откликами удвоена")
     return 0
 
 
@@ -283,6 +376,25 @@ def cmd_report(args) -> int:
     items = report_mod.rows(api)
     s = report_mod.summary(items)
     print(f"всего {s['total']}, ждут {s['waiting']}, отказы {s['discards']}, собесы {s['interviews']}")
+
+    # Что было с источниками в последнем поиске: трек не может пропасть молча.
+    ledger = state_mod.load(cfg.root)
+    runs = ledger.get("runs") or []
+    tracks = (runs[-1].get("tracks") if runs else {}) or {}
+    if tracks:
+        print("\nтреки последнего поиска:")
+        for name, st in tracks.items():
+            print(
+                f"  {name}: {_track_status(st)}, запросов {st.get('queries', 0)}, "
+                f"найдено {st.get('found', 0)}, прошли {st.get('passed', 0)}"
+            )
+    left = state_mod.postponed(ledger)
+    if left:
+        print(f"в очереди на следующий раз: {len(left)}")
+    until = state_mod.blocked_until(ledger)
+    if until:
+        print(f"блокировка до {until:%d.%m %H:%M}, пауза между откликами удвоена")
+
     out = Path(args.out) if args.out else cfg.data_dir / f"report-{date.today().isoformat()}.xlsx"
     path = report_mod.to_xlsx(items, out) if out.suffix == ".xlsx" else report_mod.to_csv(items, out)
     print(f"файл: {path}")

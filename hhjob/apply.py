@@ -11,6 +11,9 @@ from typing import Any
 
 from . import filters, hh, letters, state
 
+# Признаки того, что пора останавливаться, а не подбирать текст.
+STOP_WORDS = ("captcha", "капча", "403", "429", "too many", "limit", "лимит")
+
 
 def plan(
     api,
@@ -21,15 +24,25 @@ def plan(
     template: str,
     *,
     limit: int = 0,
+    known: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
-    """Готовит к отправке. Возвращает (готовые, причины пропуска)."""
+    """Готовит к отправке. Возвращает (готовые, причины пропуска).
+
+    known это вакансии, по которым отклик уже есть в переговорах на hh.
+    Проверка нужна на случай, если отклик отправили руками или другим
+    инструментом: свой журнал об этом не знает.
+    """
     ready: list[dict[str, Any]] = []
     skipped: list[tuple[str, str]] = []
+    known = known or set()
 
     for v in targets:
         vid = str(v["id"])
-        if state.already_sent(ledger, vid):
+        if state.already_sent(ledger, vid, v.get("employer"), v.get("name")):
             skipped.append((vid, "уже откликались"))
+            continue
+        if vid in known:
+            skipped.append((vid, "отклик уже есть в переговорах"))
             continue
         if v.get("archived"):
             skipped.append((vid, "в архиве"))
@@ -66,15 +79,25 @@ def send(
     dry: bool = False,
     per_day: int = 40,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+    """Отправляет. Возвращает (отправленные, ошибки).
+
+    Отложенные по дневному лимиту не теряются: они попадают в очередь
+    и пойдут первыми в следующий раз.
+    """
     sent: list[dict[str, Any]] = []
     failed: list[tuple[str, str]] = []
     today = state.sent_today(ledger)
+    pause = state.pause_for(ledger, pause)
 
-    for item in ready:
+    for i, item in enumerate(ready):
         v = item["vacancy"]
         vid = str(v["id"])
+
         if today >= per_day:
-            failed.append((vid, f"дневной лимит {per_day} достигнут"))
+            rest = [str(x["vacancy"]["id"]) for x in ready[i:]]
+            if not dry:
+                state.set_postponed(ledger, rest)
+            failed.append((vid, f"дневной лимит {per_day}, остаток {len(rest)} перенесен"))
             break
 
         resume_id = resume_for.get(vid, default_resume)
@@ -88,12 +111,20 @@ def send(
             msg = f"{type(exc).__name__}: {exc}"[:200]
             failed.append((vid, msg))
             low = str(exc).lower()
-            if "captcha" in low or "403" in low or "limit" in low:
+            if any(word in low for word in STOP_WORDS):
+                state.block(ledger, msg)
+                rest = [str(x["vacancy"]["id"]) for x in ready[i:]]
+                state.set_postponed(ledger, rest)
                 failed.append((vid, "похоже на капчу или лимит, остановились"))
                 break
             continue
 
-        state.mark(ledger, vid, employer=v.get("employer"), resume=resume_id)
+        state.mark(
+            ledger, vid,
+            employer=v.get("employer"),
+            name=v.get("name"),
+            resume=resume_id,
+        )
         state.save(root, ledger)
         today += 1
         sent.append(
@@ -104,6 +135,6 @@ def send(
                 "chars": len(item["letter"]),
             }
         )
-        time.sleep(1.5)
+        time.sleep(pause)
 
     return sent, failed

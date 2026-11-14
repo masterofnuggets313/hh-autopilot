@@ -53,6 +53,7 @@ class Config:
     tags: dict[str, list[str]] = field(default_factory=dict)
     cold_markers: list[str] = field(default_factory=list)
     gph_markers: list[str] = field(default_factory=list)
+    blockers_scope: str = "all"
     profile: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -113,5 +114,6 @@ def load(root: Path | None = None) -> Config:
         tags=dict(raw.get("tags") or {}),
         cold_markers=list((raw.get("filters") or {}).get("cold") or []),
         gph_markers=list((raw.get("filters") or {}).get("gph") or []),
+        blockers_scope=str((raw.get("filters") or {}).get("scope") or "all"),
         profile=profile_raw.get("profile") or {},
     )
